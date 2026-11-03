@@ -1,21 +1,32 @@
 CC = gcc
-CFLAGS = -Wall -O2 $(shell pkg-config --cflags libpipewire-0.3 lilv-0 json-c) -fPIC
-LDFLAGS = $(shell pkg-config --libs libpipewire-0.3 lilv-0 json-c) -ldl
+CFLAGS = -Wall -Wextra -O2 -g $(shell pkg-config --cflags libpipewire-0.3 lilv-0 json-c) -fPIC -Isrc
+LDFLAGS = $(shell pkg-config --libs libpipewire-0.3 lilv-0 json-c) -ldl -lm
 
-TARGET = easyeffects_cli_full
-SRC = easyeffects_cli_full.c
+TARGET = easyeffects_cli
+SRC_DIR = src
+SRCS = $(SRC_DIR)/main.c \
+       $(SRC_DIR)/pipewire_manager.c \
+       $(SRC_DIR)/lv2_loader.c \
+       $(SRC_DIR)/preset_manager.c
+
+OBJS = $(SRCS:.c=.o)
 
 all: $(TARGET)
 
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+$(TARGET): $(OBJS)
+	$(CC) -o $@ $^ $(LDFLAGS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(OBJS)
 
-install:
+install: $(TARGET)
 	mkdir -p ~/.config/easyeffects-cli/presets
 	cp $(TARGET) /usr/local/bin/
 
-test:
+test: $(TARGET)
 	./$(TARGET) list-plugins
+
+.PHONY: all clean install test

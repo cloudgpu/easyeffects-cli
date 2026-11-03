@@ -1,27 +1,11 @@
+#include "easyeffects_cli.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <json-c/json.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#define PRESET_DIR "~/.config/easyeffects-cli/presets"
-
-typedef struct {
-    char plugin_uri[512];
-    char plugin_name[256];
-    char param_name[128];
-    double value;
-    char type[32];
-} param_entry_t;
-
-typedef struct {
-    char name[256];
-    char description[512];
-    param_entry_t params[256];
-    int param_count;
-    char chain[1024];
-} preset_t;
+#include <dirent.h>
 
 static void ensure_preset_dir() {
     char home[512];
@@ -63,12 +47,14 @@ int preset_save(const char *name, preset_t *preset) {
     FILE *f = fopen(path, "w");
     if (!f) {
         free(path);
+        json_object_put(jobj);
         return -1;
     }
     
     fprintf(f, "%s\n", json_object_to_json_string_ext(jobj, JSON_C_TO_STRING_PRETTY));
     fclose(f);
     free(path);
+    json_object_put(jobj);
     
     printf("Preset saved: %s\n", name);
     return 0;
@@ -105,37 +91,40 @@ int preset_load(const char *name, preset_t *preset) {
     json_object_object_get_ex(jobj, "chain", &jchain);
     json_object_object_get_ex(jobj, "params", &jparams);
     
-    strncpy(preset->name, json_object_get_string(jname), 255);
-    strncpy(preset->description, json_object_get_string(jdesc), 511);
-    strncpy(preset->chain, json_object_get_string(jchain), 1023);
+    if (jname) strncpy(preset->name, json_object_get_string(jname), 255);
+    if (jdesc) strncpy(preset->description, json_object_get_string(jdesc), 511);
+    if (jchain) strncpy(preset->chain, json_object_get_string(jchain), 1023);
     
-    preset->param_count = json_object_array_length(jparams);
-    for (int i = 0; i < preset->param_count; i++) {
-        json_object *jparam = json_object_array_get_idx(jparams, i);
-        json_object *tmp;
-        
-        json_object_object_get_ex(jparam, "plugin_uri", &tmp);
-        strncpy(preset->params[i].plugin_uri, json_object_get_string(tmp), 511);
-        
-        json_object_object_get_ex(jparam, "plugin_name", &tmp);
-        strncpy(preset->params[i].plugin_name, json_object_get_string(tmp), 255);
-        
-        json_object_object_get_ex(jparam, "param_name", &tmp);
-        strncpy(preset->params[i].param_name, json_object_get_string(tmp), 127);
-        
-        json_object_object_get_ex(jparam, "value", &tmp);
-        preset->params[i].value = json_object_get_double(tmp);
-        
-        json_object_object_get_ex(jparam, "type", &tmp);
-        strncpy(preset->params[i].type, json_object_get_string(tmp), 31);
+    if (jparams) {
+        preset->param_count = json_object_array_length(jparams);
+        for (int i = 0; i < preset->param_count && i < 256; i++) {
+            json_object *jparam = json_object_array_get_idx(jparams, i);
+            json_object *tmp;
+            
+            json_object_object_get_ex(jparam, "plugin_uri", &tmp);
+            if (tmp) strncpy(preset->params[i].plugin_uri, json_object_get_string(tmp), 511);
+            
+            json_object_object_get_ex(jparam, "plugin_name", &tmp);
+            if (tmp) strncpy(preset->params[i].plugin_name, json_object_get_string(tmp), 255);
+            
+            json_object_object_get_ex(jparam, "param_name", &tmp);
+            if (tmp) strncpy(preset->params[i].param_name, json_object_get_string(tmp), 127);
+            
+            json_object_object_get_ex(jparam, "value", &tmp);
+            if (tmp) preset->params[i].value = json_object_get_double(tmp);
+            
+            json_object_object_get_ex(jparam, "type", &tmp);
+            if (tmp) strncpy(preset->params[i].type, json_object_get_string(tmp), 31);
+        }
     }
     
     free(path);
+    json_object_put(jobj);
     printf("Preset loaded: %s\n", name);
     return 0;
 }
 
-void preset_list() {
+void preset_list(void) {
     ensure_preset_dir();
     const char *home = getenv("HOME");
     char path[512];
@@ -144,30 +133,27 @@ void preset_list() {
     printf("Available presets:\n");
     printf("==================\n");
     
-    // Simple directory listing
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "ls -1 %s 2>/dev/null", path);
-    system(cmd);
-}
-
-int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        printf("Usage: %s preset <save|load|list> [name]\n", argv[0]);
-        return 1;
+    DIR *dir = opendir(path);
+    if (!dir) {
+        printf("  (none)\n");
+        return;
     }
     
-    if (strcmp(argv[1], "preset") == 0) {
-        if (strcmp(argv[2], "list") == 0) {
-            preset_list();
-        } else if (strcmp(argv[2], "save") == 0 && argc >= 4) {
-            preset_t p = {0};
-            strncpy(p.name, argv[3], 255);
-            preset_save(argv[3], &p);
-        } else if (strcmp(argv[2], "load") == 0 && argc >= 4) {
-            preset_t p = {0};
-            preset_load(argv[3], &p);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strstr(entry->d_name, ".json")) {
+            printf("  %s\n", entry->d_name);
         }
     }
-    
-    return 0;
+    closedir(dir);
+}
+
+int preset_delete(const char *name) {
+    char *path = preset_path(name);
+    int result = remove(path);
+    free(path);
+    if (result == 0) {
+        printf("Preset deleted: %s\n", name);
+    }
+    return result;
 }
